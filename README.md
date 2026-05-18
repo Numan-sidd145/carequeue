@@ -51,7 +51,7 @@ https://Numan-sidd145.github.io/*
 http://127.0.0.1:5173/*
 ```
 
-4. Add the key in the app under **Admin → Platform settings → Google Maps**.
+4. Add only the API key in the app under **Admin → Platform settings → Google Maps**. If you paste a full script URL or query string, the app will extract the key automatically.
 
 For a deployed public default, put the restricted key in `src/config.js`:
 

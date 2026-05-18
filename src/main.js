@@ -655,7 +655,7 @@ async function initializeGoogleMap(state) {
     await renderGoogleDoctorMap(canvas, currentLocation(state), doctorsWithDistance(state));
   } catch (error) {
     if (renderId !== mapRenderId) return;
-    canvas.innerHTML = `<div class="map-error">Google Maps could not load. Check the API key and domain restrictions.</div>`;
+    canvas.innerHTML = `<div class="map-error">${error.message || "Google Maps could not load. Check the API key and domain restrictions."}</div>`;
   }
 }
 

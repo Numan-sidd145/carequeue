@@ -4,12 +4,12 @@ let mapsPromise = null;
 let geocoderPromise = null;
 
 export function getGoogleMapsApiKey() {
-  return (
+  return normalizeGoogleMapsApiKey(
     window.CAREQUEUE_GOOGLE_MAPS_API_KEY ||
-    window.localStorage.getItem("carequeue-google-maps-api-key") ||
-    GOOGLE_MAPS_API_KEY ||
-    ""
-  ).trim();
+      window.localStorage.getItem("carequeue-google-maps-api-key") ||
+      GOOGLE_MAPS_API_KEY ||
+      ""
+  );
 }
 
 export function getGoogleMapsMapId() {
@@ -25,10 +25,31 @@ export function isGoogleMapsConfigured() {
   return Boolean(getGoogleMapsApiKey());
 }
 
+export function normalizeGoogleMapsApiKey(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    return normalizeGoogleMapsApiKey(url.searchParams.get("key") || raw);
+  } catch {
+    // The value may be just a query string or a raw key.
+  }
+
+  const keyParam = raw.match(/(?:^|[?&])key=([^&]+)/);
+  if (keyParam) return decodeURIComponent(keyParam[1]).trim();
+
+  const keyLike = raw.match(/AIza[0-9A-Za-z_-]+/);
+  if (keyLike) return keyLike[0];
+
+  return raw.split(/[&#?]/)[0].trim();
+}
+
 export function saveGoogleMapsSettings(apiKey, mapId = "") {
-  window.localStorage.setItem("carequeue-google-maps-api-key", apiKey.trim());
+  window.localStorage.setItem("carequeue-google-maps-api-key", normalizeGoogleMapsApiKey(apiKey));
   window.localStorage.setItem("carequeue-google-maps-map-id", mapId.trim());
   document.querySelector("script[data-carequeue-google-maps]")?.remove();
+  window.__carequeueGoogleMapsAuthError = "";
   mapsPromise = null;
   geocoderPromise = null;
 }
@@ -37,6 +58,7 @@ export function clearGoogleMapsSettings() {
   window.localStorage.removeItem("carequeue-google-maps-api-key");
   window.localStorage.removeItem("carequeue-google-maps-map-id");
   document.querySelector("script[data-carequeue-google-maps]")?.remove();
+  window.__carequeueGoogleMapsAuthError = "";
   mapsPromise = null;
   geocoderPromise = null;
 }
@@ -58,13 +80,19 @@ export async function loadGoogleMaps() {
       return;
     }
 
+    window.__carequeueGoogleMapsAuthError = "";
+    window.gm_authFailure = () => {
+      window.__carequeueGoogleMapsAuthError =
+        "Google Maps rejected this API key. Enable billing, enable Maps JavaScript API, and check website restrictions.";
+    };
+
     const script = document.createElement("script");
     script.dataset.carequeueGoogleMaps = "true";
     script.async = true;
     script.defer = true;
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
       getGoogleMapsApiKey()
-    )}&v=weekly&libraries=places,geocoding,marker`;
+    )}&v=weekly&libraries=places,marker&loading=async`;
     script.onload = () => resolve(window.google.maps);
     script.onerror = () => reject(new Error("Unable to load Google Maps."));
     document.head.appendChild(script);
@@ -111,10 +139,12 @@ export async function geocodeAddress(address) {
 
 export async function renderGoogleDoctorMap(container, userLocation, doctors) {
   const maps = await loadGoogleMaps();
+  throwIfAuthError();
   const [{ Map }, markerLibrary] = await Promise.all([
     maps.importLibrary("maps"),
     maps.importLibrary("marker"),
   ]);
+  throwIfAuthError();
   const { AdvancedMarkerElement } = markerLibrary;
   const mapId = getGoogleMapsMapId();
   const map = new Map(container, {
@@ -161,6 +191,8 @@ export async function renderGoogleDoctorMap(container, userLocation, doctors) {
   });
 
   map.fitBounds(bounds, 64);
+  await waitForGoogleAuth();
+  throwIfAuthError();
   return map;
 }
 
@@ -191,4 +223,14 @@ function placeMarker({ maps, AdvancedMarkerElement, map, mapId, position, title,
     title,
     label: label.length <= 2 ? label : undefined,
   });
+}
+
+function throwIfAuthError() {
+  if (window.__carequeueGoogleMapsAuthError) {
+    throw new Error(window.__carequeueGoogleMapsAuthError);
+  }
+}
+
+function waitForGoogleAuth() {
+  return new Promise((resolve) => window.setTimeout(resolve, 800));
 }
