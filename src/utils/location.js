@@ -28,6 +28,67 @@ export function findLocationBySearch(locations, query) {
   });
 }
 
+export function fallbackManualLocation(locations, query, currentLocation) {
+  const existing = findLocationBySearch(locations, query);
+  if (existing) return existing;
+  const normalized = query.trim();
+  const lower = normalized.toLowerCase();
+  const knownAreas = [
+    {
+      area: "MG Road",
+      city: "Bengaluru",
+      lat: 12.9757,
+      lng: 77.6053,
+      keywords: ["mg road", "mahatma gandhi road"],
+    },
+    {
+      area: "Jayanagar",
+      city: "Bengaluru",
+      lat: 12.925,
+      lng: 77.5938,
+      keywords: ["jayanagar"],
+    },
+    {
+      area: "HSR Layout",
+      city: "Bengaluru",
+      lat: 12.9116,
+      lng: 77.6389,
+      keywords: ["hsr", "hsr layout"],
+    },
+    {
+      area: "Electronic City",
+      city: "Bengaluru",
+      lat: 12.8399,
+      lng: 77.677,
+      keywords: ["electronic city", "electronics city"],
+    },
+  ];
+  const known = knownAreas.find((location) =>
+    location.keywords.some((keyword) => lower.includes(keyword))
+  );
+  if (known) {
+    return {
+      id: `manual-${Date.now()}`,
+      label: `${known.area}, ${known.city}`,
+      area: known.area,
+      city: known.city,
+      lat: known.lat,
+      lng: known.lng,
+      source: "Local estimate",
+    };
+  }
+
+  return {
+    id: `manual-${Date.now()}`,
+    label: normalized,
+    area: normalized,
+    city: currentLocation.city || "Manual location",
+    lat: currentLocation.lat,
+    lng: currentLocation.lng,
+    source: "Manual label",
+  };
+}
+
 export function buildMapPoints(doctorsWithClinics, userLocation) {
   const lats = doctorsWithClinics.map((item) => item.clinic.lat).concat(userLocation.lat);
   const lngs = doctorsWithClinics.map((item) => item.clinic.lng).concat(userLocation.lng);

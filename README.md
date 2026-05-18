@@ -28,6 +28,7 @@ The app stores mock bookings in `localStorage`, so refreshes keep the demo state
 ## Included flows
 
 - Location detection and manual city entry.
+- Google Maps integration for exact manual-location geocoding and real map rendering when a key is configured.
 - Nearby doctors sorted by distance and availability.
 - Doctor detail with live queue and slot picker.
 - Booking with duplicate slot prevention.
@@ -35,3 +36,34 @@ The app stores mock bookings in `localStorage`, so refreshes keep the demo state
 - Appointment status tracking and automatic queue recalculation.
 - Profile form, upcoming appointments, history, notifications.
 - Admin panel for schedules, doctor availability, and queue progression.
+- Admin-maintained doctor creation and doctor-admin onboarding invites.
+
+## Google Maps setup
+
+The app works without a Google Maps key by using a local fallback map and seeded coordinates. For production:
+
+1. Create a Google Maps Platform browser API key.
+2. Enable **Maps JavaScript API** and **Geocoding API** in the same Google Cloud project.
+3. Restrict the key to your website, for example:
+
+```text
+https://Numan-sidd145.github.io/*
+http://127.0.0.1:5173/*
+```
+
+4. Add the key in the app under **Admin → Platform settings → Google Maps**.
+
+For a deployed public default, put the restricted key in `src/config.js`:
+
+```js
+export const GOOGLE_MAPS_API_KEY = "YOUR_RESTRICTED_BROWSER_KEY";
+export const GOOGLE_MAPS_MAP_ID = "";
+```
+
+Browser Maps keys are visible in public frontend code, so domain and API restrictions are required.
+
+Helpful official docs:
+
+- [Maps JavaScript API](https://developers.google.com/maps/documentation/javascript)
+- [Maps JavaScript geocoding service](https://developers.google.com/maps/documentation/javascript/geocoding)
+- [API key security best practices](https://developers.google.com/maps/api-security-best-practices)

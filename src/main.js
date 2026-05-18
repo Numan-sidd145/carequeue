@@ -8,8 +8,17 @@ import { ProfilePanel } from "./components/ProfilePanel.js";
 import { AdminPanel } from "./components/AdminPanel.js";
 import { AuthPanel } from "./components/AuthPanel.js";
 import { icon } from "./components/icons.js";
-import { distanceInKm, findLocationBySearch, formatDistance } from "./utils/location.js";
+import { distanceInKm, fallbackManualLocation, formatDistance } from "./utils/location.js";
 import { getDoctorQueueSummary } from "./utils/queue.js";
+import {
+  clearGoogleMapsSettings,
+  geocodeAddress,
+  getGoogleMapsApiKey,
+  getGoogleMapsMapId,
+  isGoogleMapsConfigured,
+  renderGoogleDoctorMap,
+  saveGoogleMapsSettings,
+} from "./services/googleMaps.js";
 
 const app = document.querySelector("#app");
 
@@ -126,6 +135,7 @@ function renderHome(state) {
             <div>
               <span class="eyebrow">Nearby doctors</span>
               <h1>${location.area}, ${location.city}</h1>
+              <p class="location-source">${location.source ? `${location.source} location` : "Selected location"}</p>
             </div>
             <button class="button button--ghost" data-action="detect-location">
               ${icon("mapPin")} Detect
@@ -146,9 +156,15 @@ function renderHome(state) {
             </select>
           </div>
           <div class="manual-location">
-            <input placeholder="Enter area manually" data-action="manual-location-input" />
-            <button class="button button--secondary" data-action="manual-location">Use area</button>
+            <input placeholder="Enter area, city, or full address" value="${state.ui.locationDraft}" data-action="manual-location-input" />
+            <button class="button button--secondary" data-action="manual-location">Use location</button>
           </div>
+          ${state.ui.errors.manualLocation ? `<p class="field-error">${state.ui.errors.manualLocation}</p>` : ""}
+          ${
+            isGoogleMapsConfigured()
+              ? `<p class="helper-text">Google Maps geocoding is enabled for manual locations.</p>`
+              : `<p class="helper-text">Add a Google Maps API key in Admin for exact address lookup.</p>`
+          }
           ${renderFilters(state, languages)}
         </section>
         <div class="result-count">
@@ -484,8 +500,6 @@ function render(state) {
   renderShell(state, (pages[state.view] || renderHome)(state));
 }
 
-subscribe(render);
-
 app.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
@@ -508,12 +522,12 @@ app.addEventListener("click", (event) => {
   if (action === "reset-demo") actions.resetDemo();
   if (action === "add-doctor") actions.addDoctor();
   if (action === "add-slot") actions.addSlot(target.dataset.doctorId);
-  if (action === "manual-location") {
-    const input = app.querySelector("[data-action='manual-location-input']");
-    const location = findLocationBySearch(window.__carequeueState.locations, input?.value || "");
-    if (location) actions.setLocation(location.id);
-  }
+  if (action === "manual-location") handleManualLocation();
   if (action === "detect-location") detectLocation();
+  if (action === "save-maps-settings") handleSaveMapsSettings();
+  if (action === "clear-maps-settings") handleClearMapsSettings();
+  if (action === "admin-mode") actions.updateAdminDraft("onboardingMode", target.dataset.mode);
+  if (action === "geocode-clinic") handleGeocodeClinic();
 });
 
 app.addEventListener("input", (event) => {
@@ -521,26 +535,25 @@ app.addEventListener("input", (event) => {
   const action = target.dataset.action;
   if (action === "filter-input") actions.updateFilter(target.dataset.filter, target.value);
   if (action === "filter-checkbox") actions.updateFilter(target.dataset.filter, target.checked);
-  if (action === "booking-input") actions.updateBookingDraft(target.dataset.field, target.value);
-  if (action === "profile-input") actions.updateProfileDraft(target.dataset.field, target.value);
-  if (action === "auth-input") actions.updateAuthDraft(target.dataset.field, target.value);
-  if (action === "admin-input") actions.updateAdminDraft(target.dataset.field, target.value);
-  if (action === "slot-draft") actions.updateSlotDraft(target.dataset.doctorId, target.value);
-  if (action === "doctor-field") actions.updateDoctorField(target.dataset.doctorId, target.dataset.field, target.value);
-  if (action === "queue-field") actions.updateQueueField(target.dataset.doctorId, target.dataset.field, target.value);
-  if (action === "profile-specialties") {
-    const values = Array.from(target.selectedOptions).map((option) => option.value);
-    actions.updateProfileDraft("preferredSpecialties", values);
-  }
 });
 
 app.addEventListener("change", (event) => {
   const target = event.target;
   const action = target.dataset.action;
   if (action === "location-select") actions.setLocation(target.value);
+  if (action === "booking-input") actions.updateBookingDraft(target.dataset.field, target.value);
+  if (action === "profile-input") actions.updateProfileDraft(target.dataset.field, target.value);
+  if (action === "auth-input") actions.updateAuthDraft(target.dataset.field, target.value);
+  if (action === "manual-location-input") actions.updateLocationDraft(target.value);
+  if (action === "maps-input") actions.updateMapsSettings(target.dataset.field, target.value);
+  if (action === "slot-draft") actions.updateSlotDraft(target.dataset.doctorId, target.value);
   if (action === "admin-input") actions.updateAdminDraft(target.dataset.field, target.value);
   if (action === "doctor-field") actions.updateDoctorField(target.dataset.doctorId, target.dataset.field, target.value);
   if (action === "queue-field") actions.updateQueueField(target.dataset.doctorId, target.dataset.field, target.value);
+  if (action === "profile-specialties") {
+    const values = Array.from(target.selectedOptions).map((option) => option.value);
+    actions.updateProfileDraft("preferredSpecialties", values);
+  }
   if (action === "status-change") {
     actions.updateAppointmentStatus(target.dataset.appointmentId, target.value);
   }
@@ -564,6 +577,95 @@ function detectLocation() {
   );
 }
 
+async function handleManualLocation() {
+  const state = window.__carequeueState;
+  const input = app.querySelector("[data-action='manual-location-input']");
+  const query = (input?.value || state.ui.locationDraft).trim();
+  if (!query) {
+    actions.setManualLocationError("Enter an area, city, or address.");
+    return;
+  }
+
+  if (isGoogleMapsConfigured()) {
+    try {
+      const location = await geocodeAddress(query);
+      actions.setManualLocation(location, true);
+      return;
+    } catch (error) {
+      const fallback = fallbackManualLocation(state.locations, query, currentLocation(state));
+      actions.setManualLocation(fallback, false);
+      actions.setManualLocationError(
+        `${error.message} Using the typed location as a fallback.`
+      );
+      return;
+    }
+  }
+
+  const fallback = fallbackManualLocation(state.locations, query, currentLocation(state));
+  actions.setManualLocation(fallback, false);
+}
+
+function handleSaveMapsSettings() {
+  const apiKeyInput = app.querySelector('[data-action="maps-input"][data-field="apiKey"]');
+  const mapIdInput = app.querySelector('[data-action="maps-input"][data-field="mapId"]');
+  const settings = window.__carequeueState.ui.mapsSettings;
+  const apiKey = apiKeyInput?.value ?? settings.apiKey;
+  const mapId = mapIdInput?.value ?? settings.mapId;
+  saveGoogleMapsSettings(apiKey, mapId);
+  actions.syncMapsSettings({
+    apiKey: getGoogleMapsApiKey(),
+    mapId: getGoogleMapsMapId(),
+  });
+  actions.showToast("Google Maps settings saved");
+}
+
+function handleClearMapsSettings() {
+  clearGoogleMapsSettings();
+  actions.syncMapsSettings({ apiKey: "", mapId: "" });
+  actions.showToast("Google Maps settings cleared");
+}
+
+async function handleGeocodeClinic() {
+  const draft = window.__carequeueState.ui.adminDraft;
+  const query = [draft.clinicAddress, draft.clinicArea, draft.clinicCity].filter(Boolean).join(", ");
+  if (!query.trim()) {
+    actions.setAdminClinicError("Enter a clinic address first.");
+    return;
+  }
+  if (!isGoogleMapsConfigured()) {
+    actions.setAdminClinicError("Add a Google Maps API key before geocoding clinic addresses.");
+    return;
+  }
+  try {
+    const location = await geocodeAddress(query);
+    actions.updateAdminClinicLocation(location);
+  } catch (error) {
+    actions.setAdminClinicError(error.message);
+  }
+}
+
+let mapRenderId = 0;
+
+async function initializeGoogleMap(state) {
+  const canvas = app.querySelector("[data-google-map]");
+  if (!canvas) return;
+  const renderId = (mapRenderId += 1);
+  canvas.innerHTML = `<div class="map-loading">Loading Google Maps...</div>`;
+  try {
+    await renderGoogleDoctorMap(canvas, currentLocation(state), doctorsWithDistance(state));
+  } catch (error) {
+    if (renderId !== mapRenderId) return;
+    canvas.innerHTML = `<div class="map-error">Google Maps could not load. Check the API key and domain restrictions.</div>`;
+  }
+}
+
+actions.syncMapsSettings({
+  apiKey: getGoogleMapsApiKey(),
+  mapId: getGoogleMapsMapId(),
+});
+
 subscribe((state) => {
+  render(state);
   window.__carequeueState = state;
+  initializeGoogleMap(state);
 });

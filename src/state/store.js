@@ -46,14 +46,30 @@ function initialState() {
         fullName: "",
         phone: "",
       },
+      locationDraft: "",
+      mapsSettings: {
+        apiKey: "",
+        mapId: "",
+      },
       adminDraft: {
         name: "",
         specialty: "General Physician",
+        clinicMode: "existing",
         clinicId: "clinic-hope",
+        clinicName: "",
+        clinicAddress: "",
+        clinicArea: "",
+        clinicCity: "Bengaluru",
+        clinicLat: "",
+        clinicLng: "",
         gender: "Female",
         language: "English",
         fee: 700,
         firstSlot: "09:00",
+        ownerName: "",
+        ownerPhone: "",
+        ownerEmail: "",
+        onboardingMode: "admin",
         slotDrafts: {},
       },
     },
@@ -157,6 +173,72 @@ export const actions = {
       selectedLocationId: null,
       detectedLocation: location,
       ui: { ...current.ui, toast: "Using detected location" },
+    }));
+  },
+
+  updateLocationDraft(value) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        locationDraft: value,
+        errors: { ...current.ui.errors, manualLocation: "" },
+      },
+    }));
+  },
+
+  setManualLocation(location, exact = false) {
+    setState((current) => ({
+      ...current,
+      selectedLocationId: null,
+      detectedLocation: location,
+      ui: {
+        ...current.ui,
+        locationDraft: location.label || "",
+        errors: { ...current.ui.errors, manualLocation: "" },
+        toast: exact ? "Location updated with Google Maps" : "Manual location updated",
+      },
+    }));
+  },
+
+  setManualLocationError(message) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        errors: { ...current.ui.errors, manualLocation: message },
+        toast: message,
+      },
+    }));
+  },
+
+  updateMapsSettings(name, value) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        mapsSettings: { ...current.ui.mapsSettings, [name]: value },
+      },
+    }));
+  },
+
+  syncMapsSettings(settings) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        mapsSettings: {
+          apiKey: settings.apiKey || "",
+          mapId: settings.mapId || "",
+        },
+      },
+    }));
+  },
+
+  showToast(message) {
+    setState((current) => ({
+      ...current,
+      ui: { ...current.ui, toast: message },
     }));
   },
 
@@ -548,6 +630,19 @@ export const actions = {
     if (!draft.specialty.trim()) errors.adminSpecialty = "Specialty is required.";
     if (!Number(draft.fee) || Number(draft.fee) < 1) errors.adminFee = "Enter a valid fee.";
     if (!/^\d{2}:\d{2}$/.test(draft.firstSlot)) errors.adminSlot = "Use HH:MM format.";
+    if (draft.clinicMode === "new") {
+      if (!draft.clinicName.trim()) errors.adminClinicName = "Clinic name is required.";
+      if (!draft.clinicAddress.trim()) errors.adminClinicAddress = "Clinic address is required.";
+      if (!Number.isFinite(Number(draft.clinicLat)) || !Number.isFinite(Number(draft.clinicLng))) {
+        errors.adminClinicGeo = "Add clinic latitude and longitude, or geocode the address.";
+      }
+    }
+    if (draft.onboardingMode === "doctor") {
+      if (!draft.ownerName.trim()) errors.adminOwnerName = "Doctor account owner is required.";
+      if (!/^[+\d\s-]{8,}$/.test(draft.ownerPhone.trim())) {
+        errors.adminOwnerPhone = "Enter a valid account phone.";
+      }
+    }
 
     if (Object.keys(errors).length) {
       setState((previous) => ({
@@ -559,13 +654,26 @@ export const actions = {
 
     const id = `doc-${Date.now()}`;
     const slotId = `slot-${id}-${draft.firstSlot.replace(":", "")}`;
+    const clinic =
+      draft.clinicMode === "new"
+        ? {
+            id: `clinic-${Date.now()}`,
+            name: cleanText(draft.clinicName),
+            type: "Clinic",
+            address: cleanText(draft.clinicAddress),
+            area: cleanText(draft.clinicArea),
+            city: cleanText(draft.clinicCity),
+            lat: Number(draft.clinicLat),
+            lng: Number(draft.clinicLng),
+          }
+        : current.clinics.find((item) => item.id === draft.clinicId);
     const doctor = {
       id,
-      name: draft.name.startsWith("Dr.") ? draft.name : `Dr. ${draft.name}`,
-      specialty: draft.specialty,
+      name: cleanText(draft.name).startsWith("Dr.") ? cleanText(draft.name) : `Dr. ${cleanText(draft.name)}`,
+      specialty: cleanText(draft.specialty),
       gender: draft.gender,
-      languages: [draft.language],
-      clinicId: draft.clinicId,
+      languages: [cleanText(draft.language)],
+      clinicId: clinic.id,
       fee: Number(draft.fee),
       rating: 4.6,
       reviewCount: 0,
@@ -573,12 +681,26 @@ export const actions = {
       availableToday: true,
       available: true,
       nextAvailable: draft.firstSlot,
-      bio: `${draft.specialty} available for same-day consultations.`,
+      bio: `${cleanText(draft.specialty)} available for same-day consultations.`,
       slots: [{ id: slotId, time: draft.firstSlot, period: periodForTime(draft.firstSlot) }],
     };
+    const access =
+      draft.onboardingMode === "doctor"
+        ? {
+            id: `access-${Date.now()}`,
+            doctorId: id,
+            ownerName: cleanText(draft.ownerName),
+            phone: draft.ownerPhone.trim(),
+            email: cleanText(draft.ownerEmail),
+            role: "Doctor admin",
+            status: "Invited",
+          }
+        : null;
 
     setState((previous) => ({
       ...previous,
+      clinics:
+        draft.clinicMode === "new" ? previous.clinics.concat(clinic) : previous.clinics,
       doctors: previous.doctors.concat(doctor),
       queueStatuses: previous.queueStatuses.concat({
         doctorId: id,
@@ -586,11 +708,44 @@ export const actions = {
         averageConsultationMinutes: 12,
         runningLateMinutes: 0,
       }),
+      doctorAccess: access ? previous.doctorAccess.concat(access) : previous.doctorAccess,
       ui: {
         ...previous.ui,
         errors: {},
-        toast: "Doctor added",
+        toast: access ? "Doctor invited and profile added" : "Doctor added",
         adminDraft: { ...initialState().ui.adminDraft, clinicId: draft.clinicId },
+      },
+    }));
+  },
+
+  updateAdminClinicLocation(location) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        adminDraft: {
+          ...current.ui.adminDraft,
+          clinicName: current.ui.adminDraft.clinicName || location.area,
+          clinicAddress: location.address || location.label,
+          clinicArea: location.area,
+          clinicCity: location.city,
+          clinicLat: String(location.lat),
+          clinicLng: String(location.lng),
+          clinicMode: "new",
+        },
+        errors: { ...current.ui.errors, adminClinicGeo: "" },
+        toast: "Clinic location found",
+      },
+    }));
+  },
+
+  setAdminClinicError(message) {
+    setState((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        errors: { ...current.ui.errors, adminClinicGeo: message },
+        toast: message,
       },
     }));
   },
@@ -668,4 +823,8 @@ function periodForTime(time) {
   if (hour < 12) return "Morning";
   if (hour < 16) return "Afternoon";
   return "Evening";
+}
+
+function cleanText(value) {
+  return String(value || "").replace(/[<>]/g, "").trim();
 }

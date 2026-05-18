@@ -378,6 +378,18 @@ export const notifications = [
   },
 ];
 
+export const doctorAccess = [
+  {
+    id: "access-arao",
+    doctorId: "doc-ananya-rao",
+    ownerName: "Dr. Ananya Rao",
+    phone: "+91 90000 12001",
+    email: "ananya.rao@example.com",
+    role: "Doctor admin",
+    status: "Active",
+  },
+];
+
 export const seedData = {
   version: 1,
   users,
@@ -387,5 +399,6 @@ export const seedData = {
   queueStatuses,
   reviews,
   notifications,
+  doctorAccess,
   locations,
 };
